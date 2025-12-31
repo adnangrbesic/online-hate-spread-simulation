@@ -1,0 +1,15 @@
+Korisnik (orijentacija, zadovoljstvo, ljutnja, doseg, osjetljivost)
+Komunikacija (tip - Objava/Chat, doseg, ozbiljnost)
+Organizacija (ugled, tip - lobby/mediji, orijentacija, pokrivenost)
+
+
+Pitanja na koja model odg:
+Koji događaji i koliko istih se treba dogoditi da većina se agenata na obje strane nalaze u ekstremima
+Koliko jaki i koliko ekstremista treba da ti ekstremi postanu "normalni"
+
+Korisnici se stvaraju u svijetu - ne kreću se
+Iz korisnika se pojavljuju objave / kreiraju chatovi - objave imaju doseg i na neki način mogu mijenjati mišljenje korisnika tj. naljutiti ga
+Slični agenti viđaju slične objave
+Ako se pređe granica ljutnje dogodi se događaj nekoga nivoa (prosvjed, vandalizam, zločin protiv opozicije) mediji pišu o događajima, ovisno o težini događaja vijest "teže" pada na drugu stranu (jače radikalizira)
+
+Vizualizacije (boja agenta - označava orijentaciju), nekakvi simboli za objave nad agentima da znamo da vide objave (a i da se vide kao agenti na modelu) isto i za privatne chatove

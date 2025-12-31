@@ -1,0 +1,201 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  BREEDS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+breed [users user]
+breed [posts post]
+breed [orgs org]
+
+users-own [
+  orientation     ;; -100 (lijevo) do +100 (desno)
+  anger           ;; 0–100
+  satisfaction    ;; 0–100
+  sensitivity     ;; koliko ga lako naljuti sadržaj
+  reach           ;; radius utjecaja (postovi koje vidi)
+]
+
+posts-own [
+  seriousness     ;; jačina utjecaja
+  radius          ;; domet
+  creator
+]
+
+orgs-own [
+  reputation
+  org-type        ;; "media" / "lobby"
+  orientation
+  coverage        ;; koliko daleko širi vijesti
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  SETUP
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup
+  clear-all
+  setup-users
+  setup-organizations
+  reset-ticks
+end
+
+
+to setup-users
+  create-users user-num [
+    setxy random-xcor random-ycor
+    set orientation random-normal 0 30
+    set anger 0
+    set satisfaction 100
+    set sensitivity random-float 1
+    set reach 4 + random 6
+    update-user-color
+  ]
+end
+
+
+to setup-organizations
+  create-orgs 6 [
+    setxy random-xcor random-ycor
+    set org-type one-of ["media" "lobby"]
+    set orientation random-normal 0 40
+    set reputation 50
+    set coverage 8 + random 10
+    set shape "square"
+    set size 2
+    set color blue - 2
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  GO
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to go
+  generate-posts
+  spread-posts
+  apply-post-effects
+  check-for-events
+  update-visuals
+  tick
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  POST CREATION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to generate-posts
+  ;; mali postovi spontano nastaju
+  ask users with [random-float 1 < 0.02] [
+    hatch-posts 1 [
+      set shape "circle"
+      set color yellow
+      set size 0.4
+      set radius [reach] of myself
+      set seriousness 2 + random 4
+      set creator myself
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  POST SPREADING & VISIBILITY
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to spread-posts
+  ask posts [
+    ;; halo efekt radiusa
+    ask patches in-radius radius [
+      if pcolor = black [
+        set pcolor gray + 4
+      ]
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  APPLY POST EFFECTS TO USERS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-post-effects
+  ask users [
+    let visible-posts posts in-radius reach
+
+    if any? visible-posts [
+      let total-seriousness sum [seriousness] of visible-posts
+
+      ;; ljutnja raste
+      set anger anger + (total-seriousness * sensitivity * 0.3)
+      if anger > 100 [ set anger 100 ]
+
+      ;; zadovoljstvo pada
+      set satisfaction satisfaction - (total-seriousness * 0.1)
+      if satisfaction < 0 [ set satisfaction 0 ]
+
+      ;; orijentacija se radikalizira
+      set orientation orientation + ((sum [seriousness] of visible-posts) * 0.2)
+      if orientation > 100 [ set orientation 100 ]
+      if orientation < -100 [ set orientation -100 ]
+
+      update-user-color
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  EVENTS WHEN ANGER IS TOO HIGH
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to check-for-events
+  ask users with [anger > 80] [
+    ;; kreira se događaj koji radikalizira suprotnu stranu
+    let event-orientation orientation
+    let event-strength anger
+
+    ask orgs [
+      ifelse (orientation * event-orientation) < 0
+      [ set reputation reputation + (event-strength / 10) ]
+      [ set reputation reputation - (event-strength / 20) ]
+    ]
+
+    ;; resetiraj ljutnju nakon događaja
+    set anger anger * 0.3
+    update-user-color
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  UPDATE VISUALS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to update-visuals
+  ;; reset boja iz halo efekta
+  ask patches with [pcolor != black] [
+    set pcolor black
+  ]
+
+  ;; vizualizacija radiusa
+  ask users [
+    let r reach
+    ask patches in-radius r [
+      set pcolor gray + 2
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;  USER COLOR
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to update-user-color
+  if orientation >= 0 [
+    set color scale-color red orientation 0 100
+  ]
+  if orientation < 0 [
+    set color scale-color blue orientation -100 0
+  ]
+end

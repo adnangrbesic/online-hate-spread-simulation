@@ -1,0 +1,2785 @@
+<?xml version="1.0" encoding="utf-8"?>
+<model version="NetLogo 7.0.2" snapToGrid="true">
+  <code><![CDATA[;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; GLOBALS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+globals [
+  world-seed
+  last-event-type
+  last-event-orientation
+  tick-counter
+  media-post-counter
+  event-count
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BREEDS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+breed [users user]
+breed [posts post]
+breed [orgs org]
+
+directed-link-breed [post-links post-link]
+post-links-own [ link-age ]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; PATCHES
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+patches-own [
+  prosperity
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; USERS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+users-own [
+  orientation
+  anger
+  chronic-anger
+  satisfaction
+  sensitivity
+  educated
+  reach
+  anger-threshold
+  aggressiveness
+  is-clout-chaser?
+  is-hate-poster?
+  is-educated-poster?
+  is-clout-poster?
+  loyalty
+  orientation-cooldown
+  ;; MEDIA TRUST SYSTEM
+  trust-left
+  trust-center
+  trust-right
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; POSTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+posts-own [
+  seriousness
+  radius
+  creator
+  hateful
+  age
+  applied?
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ORGS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+orgs-own [
+  reputation
+  org-type
+  orientation
+  coverage
+  article-cooldown
+]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SETUP
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup
+  clear-all
+
+  if seed = 0 [
+    set world-seed random 1000000
+  ]
+  if seed != 0 [
+    set world-seed seed
+  ]
+
+  random-seed world-seed
+  set tick-counter 0
+  set media-post-counter 0
+  set event-count 0
+
+  setup-patches
+  setup-users
+  setup-orgs
+
+  reset-ticks
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup-patches
+  clear-patches
+
+  let centers 4
+  let rich-centers []
+
+  repeat centers [
+    set rich-centers lput one-of patches rich-centers
+  ]
+
+  ask patches [
+    let d min map [ p -> distance p ] rich-centers
+    set prosperity exp (- d / 6)
+    set pcolor scale-color green prosperity 0 1
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; USERS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup-users
+  create-users user-num [
+    set shape "person"
+    setxy random-xcor random-ycor
+
+    let political-group random 100
+    ifelse political-group < 30 [
+      set orientation -45 + random-normal 0 12
+    ] [
+      ifelse political-group < 70 [
+        set orientation random-normal 0 15
+      ] [
+        set orientation 45 + random-normal 0 12
+      ]
+    ]
+    set orientation max list -100 min list 100 orientation
+    
+    ifelse random-float 100 < 20 [
+      set sensitivity 0.8 + random-float 0.2
+    ] [
+      set sensitivity random-float 0.8
+    ]
+    
+    ifelse random-float 100 < educated-percent [
+      set educated 0.5 + random-float 0.5
+    ] [
+      set educated random-float 0.5
+    ]
+    set reach 3 + random 6
+
+    let p [prosperity] of patch-here
+    
+    let initial-anger 10 * (1 - p)
+    if sensitivity > 0.7 [
+      set initial-anger initial-anger + 10 + random 15
+    ]
+    set anger initial-anger
+    set chronic-anger initial-anger
+    if anger > 100 [ set anger 100 ]
+    if chronic-anger > 100 [ set chronic-anger 100 ]
+    
+    let base-sat 0.35 + (p * 0.5)
+    let edu-factor educated * 0.10
+    let anger-pen (chronic-anger / 100) * 0.35
+    let radical-pen (abs orientation / 100) * 0.08
+    set satisfaction base-sat + edu-factor - anger-pen - radical-pen
+    if satisfaction > 1 [ set satisfaction 1 ]
+    if satisfaction < 0.15 [ set satisfaction 0.15 ]
+
+    set is-clout-chaser? false
+    set aggressiveness random-float 0.3
+
+    ifelse random-float 100 < loyalty-percent [
+      set loyalty 0.4 + random-float 0.6
+    ] [
+      set loyalty random-float 0.4
+    ]
+    if abs orientation <= 30 [
+      set loyalty loyalty + 0.15
+      if loyalty > 1 [ set loyalty 1 ]
+    ]
+    
+    set orientation-cooldown 0
+    
+    set is-hate-poster? false
+    set is-educated-poster? false
+    set is-clout-poster? false
+
+    let normalized-orientation orientation / 100
+    
+    set trust-left 0.5 + (normalized-orientation * -0.4)
+    
+    set trust-center 0.6 - (abs normalized-orientation) * 0.3
+    
+    set trust-right 0.5 + (normalized-orientation * 0.4)
+    
+    set trust-left trust-left + random-float 0.15 - 0.075
+    set trust-center trust-center + random-float 0.15 - 0.075
+    set trust-right trust-right + random-float 0.15 - 0.075
+    
+    set trust-left max list 0.1 min list 1.0 trust-left
+    set trust-center max list 0.1 min list 1.0 trust-center
+    set trust-right max list 0.1 min list 1.0 trust-right
+
+    compute-anger-threshold
+    update-user-color
+  ]
+  
+  
+  let total-share hate-posters + educated-posters + clout-posters
+  let hate-ratio 0.333
+  let educated-ratio 0.333
+  let clout-ratio 0.334
+  if total-share > 0 [
+    set hate-ratio hate-posters / total-share
+    set educated-ratio educated-posters / total-share
+    set clout-ratio clout-posters / total-share
+  ]
+  
+  let num-hate-poster-users floor (num-posters * hate-ratio)
+  let num-educated-poster-users floor (num-posters * educated-ratio)
+  let num-clout-poster-users num-posters - num-hate-poster-users - num-educated-poster-users
+  
+  if hate-ratio > 0 and num-hate-poster-users < 1 [ set num-hate-poster-users 1 ]
+  if educated-ratio > 0 and num-educated-poster-users < 1 [ set num-educated-poster-users 1 ]
+  if clout-ratio > 0 and num-clout-poster-users < 1 [ set num-clout-poster-users 1 ]
+  
+  ;; HATE POSTERI
+  if num-hate-poster-users > 0 [
+    let available-users users with [not is-hate-poster? and not is-educated-poster? and not is-clout-poster?]
+    if num-hate-poster-users > count available-users [
+      set num-hate-poster-users count available-users
+    ]
+    if num-hate-poster-users > 0 [
+      ask n-of num-hate-poster-users available-users [
+        set is-hate-poster? true
+        set color black
+      ]
+    ]
+  ]
+  
+  ;; EDUCATED POSTERI
+  if num-educated-poster-users > 0 [
+    let available-for-educated users with [not is-hate-poster? and not is-educated-poster? and not is-clout-poster?]
+    if num-educated-poster-users > count available-for-educated [
+      set num-educated-poster-users count available-for-educated
+    ]
+    if num-educated-poster-users > 0 [
+      ask n-of num-educated-poster-users available-for-educated [
+        set is-educated-poster? true
+        set color white
+      ]
+    ]
+  ]
+  
+  ;; CLOUT POSTERI
+  if num-clout-poster-users > 0 [
+    let available-for-clout users with [not is-hate-poster? and not is-educated-poster? and not is-clout-poster?]
+    if num-clout-poster-users > count available-for-clout [
+      set num-clout-poster-users count available-for-clout
+    ]
+    if num-clout-poster-users > 0 [
+      ask n-of num-clout-poster-users available-for-clout [
+        set is-clout-poster? true
+        set is-clout-chaser? true
+        set color 45
+        let normal-val random-normal avg-aggressiveness 0.15
+        set aggressiveness max list 0.1 (min list 1.0 normal-val)
+      ]
+    ]
+  ]
+end
+
+to compute-anger-threshold
+  set anger-threshold 45
+    + 35 * educated
+    + 25 * satisfaction
+    - 30 * sensitivity
+
+  if anger-threshold > 100 [ set anger-threshold 100 ]
+  if anger-threshold < 20  [ set anger-threshold 20  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ORGS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup-orgs
+  
+  create-orgs 1 [
+    setxy -12 12
+    set shape "house"
+    set size 3
+    set color blue
+    set org-type "left"
+    set orientation -70
+    set reputation 50
+    set coverage 20
+    set article-cooldown 0
+  ]
+  
+  create-orgs 1 [
+    setxy 0 14
+    set shape "house"
+    set size 3
+    set color green
+    set org-type "center"
+    set orientation 0
+    set reputation 50
+    set coverage 20
+    set article-cooldown 0
+  ]
+  
+  create-orgs 1 [
+    setxy 12 12
+    set shape "house"
+    set size 3
+    set color red
+    set org-type "right"
+    set orientation 70
+    set reputation 50
+    set coverage 20
+    set article-cooldown 0
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; GO
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to go
+  apply-background-anger
+  apply-satisfaction-decay
+  
+  ask users [
+    if orientation-cooldown > 0 [
+      set orientation-cooldown orientation-cooldown - 1
+    ]
+  ]
+  
+  if ticks mod 5 = 0 [
+    apply-natural-deradicalization
+  ]
+  
+  if ticks mod 20 = 0 and ticks > 0 [
+    apply-pride-mechanism
+  ]
+  
+  if ticks mod 30 = 0 and ticks > 0 [
+    apply-centrifugal-push
+  ]
+  
+  generate-posts
+  apply-post-effects
+  trigger-events
+  
+  media-check-events
+  
+  set media-post-counter media-post-counter + 1
+  if media-post-counter >= 25 [
+    generate-spontaneous-media-posts
+    set media-post-counter 0
+  ]
+  
+  set tick-counter tick-counter + 1
+  if tick-counter >= 10 [
+    clout-chasing-behavior
+    set tick-counter 0
+  ]
+  
+  ask posts [
+    set age age + 1
+    if age > 5 [ die ]
+  ]
+  ask post-links [
+    set link-age link-age + 1
+    if link-age > 3 [ die ]
+  ]
+  tick
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STABILIZACIJSKI POSTOVI
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-stabilizing-post-effects
+  let creator-educated [educated] of creator
+  let creator-satisfaction [satisfaction] of creator
+  let creator-sensitivity [sensitivity] of creator
+  
+  let viewers users in-radius radius with [
+    self != [creator] of myself
+  ]
+  
+  if any? viewers [
+    ask viewers [
+      let viewer-radicalization abs orientation / 100
+      let education-resistance educated * 0.7
+      
+      ifelse viewer-radicalization > 0.7 and sensitivity > 0.5 and educated < 0.4 [
+        let backfire-anger 3 * sensitivity * (1 - educated) * viewer-radicalization
+        set anger anger + backfire-anger
+        if anger > 100 [ set anger 100 ]
+        
+        if orientation-cooldown = 0 [
+          let loyalty-block (1 - loyalty * 0.8)
+          if orientation > 0 [
+            set orientation orientation + (1.5 * loyalty-block)
+          ]
+          if orientation < 0 [
+            set orientation orientation - (1.5 * loyalty-block)
+          ]
+          set orientation max list -100 min list 100 orientation
+        ]
+      ] [
+        let anger-reduction (creator-educated * 6 + creator-satisfaction * 3) * (1 - viewer-radicalization) * (1 + education-resistance)
+        set anger anger - anger-reduction
+        if anger < 0 [ set anger 0 ]
+        
+        if viewer-radicalization > 0.4 and educated > 0.5 and orientation-cooldown = 0 [
+          let deradicalization-chance 0.05 * educated * creator-educated
+          if random-float 1 < deradicalization-chance [
+            if orientation > 0 [
+              set orientation orientation - 1
+            ]
+            if orientation < 0 [
+              set orientation orientation + 1
+            ]
+          ]
+        ]
+      ]
+      
+      update-user-color
+    ]
+    
+    ask viewers [
+      create-post-link-from [creator] of myself [
+        set color white
+        set thickness 0.3
+        set link-age 0
+      ]
+    ]
+  ]
+  
+  set applied? true
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; CLOUT CHASING BEHAVIOR - 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 
+;; 
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to clout-chasing-behavior
+  
+  let num-top-influencers ceiling (count users * top-influencer-percent / 100)
+  if num-top-influencers < 1 [ set num-top-influencers 1 ]
+  if num-top-influencers > count users [ set num-top-influencers count users ]
+  
+  let top-influencers max-n-of num-top-influencers users [
+    reach * (1 + abs orientation / 100) * (1 + aggressiveness)
+  ]
+  
+  
+  ask users with [aggressiveness > 0.2] [
+    let vulnerability-score (
+      (1 - satisfaction) * 0.3 +
+      (anger / 100) * 0.3 +
+      (1 - educated) * 0.25 +
+      aggressiveness * 0.15
+    )
+    
+    if vulnerability-score > 0.4 and any? top-influencers [
+      
+      let sorted-influencers sort-by [
+        [a b] -> ([reach] of a * (1 + abs [orientation] of a / 50)) > 
+                 ([reach] of b * (1 + abs [orientation] of b / 50))
+      ] top-influencers
+      
+      let target first sorted-influencers
+      if random-float 1 < 0.3 [ set target one-of top-influencers ]
+      
+      
+      let target-orientation [orientation] of target
+      let orientation-gap abs (target-orientation - orientation)
+      
+      let copy-chance vulnerability-score * 0.5
+      
+      if orientation-gap < 40 [
+        set copy-chance copy-chance * 1.5
+      ]
+      
+      if satisfaction < 0.3 and anger > 60 and educated < 0.4 [
+        set copy-chance copy-chance * 2
+      ]
+      
+      if random-float 1 < copy-chance [
+        
+        if orientation-cooldown = 0 [
+          let loyalty-block (1 - loyalty * 0.8)
+          
+          let target-radicalization abs target-orientation
+          let inertia-factor 1 - (abs orientation / 100 * 0.6)
+          
+          let orientation-change 0
+          let old-orientation orientation
+          
+          ifelse target-radicalization > 40 [
+            if orientation > 5 [
+              set orientation-change 3 + random 5
+            ]
+            if orientation < -5 [
+              set orientation-change -3 - random 5
+            ]
+            if orientation >= -5 and orientation <= 5 [
+              ifelse target-orientation > 0 [
+                set orientation-change 2 + random 3
+              ] [
+                set orientation-change -2 - random 3
+              ]
+            ]
+          ] [
+            let orientation-diff target-orientation - orientation
+            set orientation-change orientation-diff * 0.05 * inertia-factor
+          ]
+          
+          ;; PRIMIJENI PROMJENU SA LOYALTY BLOKOM
+          set orientation orientation + (orientation-change * vulnerability-score * inertia-factor * loyalty-block)
+          set orientation max list -100 min list 100 orientation
+          
+          if abs (orientation - old-orientation) > 5 [
+            set orientation-cooldown 20
+          ]
+        ]
+        
+        let target-aggressiveness [aggressiveness] of target
+        if target-aggressiveness > aggressiveness [
+          set aggressiveness aggressiveness + (target-aggressiveness - aggressiveness) * 0.15
+          set aggressiveness min list 1 aggressiveness
+        ]
+        
+        ask target [
+          set reach reach + 0.05
+          if reach > 15 [ set reach 15 ]
+        ]
+        
+        update-user-color
+      ]
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-pride-mechanism
+  
+  let total-users count users
+  let min-threshold 0.05
+  let soft-threshold 0.15
+  
+  let left-group users with [orientation < -30]
+  let center-group users with [orientation >= -30 and orientation <= 30]
+  let right-group users with [orientation > 30]
+  
+  let left-percent (count left-group) / total-users
+  let center-percent (count center-group) / total-users
+  let right-percent (count right-group) / total-users
+  
+  
+  ;; LIJEVA GRUPA - TVRDI POD
+  if left-percent < min-threshold [
+    let needed-members ceiling (total-users * min-threshold) - count left-group
+    if needed-members > 0 [
+      let candidates users with [orientation >= -30 and orientation < 0]
+      if not any? candidates [ set candidates users with [orientation >= -30 and orientation <= 10] ]
+      if any? candidates [
+        let to-convert min list needed-members count candidates
+        ask min-n-of to-convert candidates [orientation] [
+          set orientation -35 - random 15
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+  
+  ;; DESNA GRUPA - TVRDI POD
+  if right-percent < min-threshold [
+    let needed-members ceiling (total-users * min-threshold) - count right-group
+    if needed-members > 0 [
+      let candidates users with [orientation > 0 and orientation <= 30]
+      if not any? candidates [ set candidates users with [orientation >= -10 and orientation <= 30] ]
+      if any? candidates [
+        let to-convert min list needed-members count candidates
+        ask max-n-of to-convert candidates [orientation] [
+          set orientation 35 + random 15
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+  
+  ;; CENTAR GRUPA - TVRDI POD
+  if center-percent < min-threshold [
+    let needed-members ceiling (total-users * min-threshold) - count center-group
+    if needed-members > 0 [
+      let candidates users with [(orientation >= -50 and orientation < -30) or (orientation > 30 and orientation <= 50)]
+      if any? candidates [
+        let to-convert min list needed-members count candidates
+        ask min-n-of to-convert candidates [abs orientation] [
+          ifelse orientation < 0 [
+            set orientation -25 + random 15
+          ] [
+            set orientation 10 + random 15
+          ]
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+  
+  
+  if left-percent >= min-threshold and left-percent < soft-threshold [
+    ask users with [orientation >= -30 and orientation < -10] [
+      if orientation-cooldown = 0 [
+        let loyalty-block (1 - loyalty * 0.8)
+        if random-float 1 < (0.12 * loyalty-block) [
+          set orientation orientation - ((2 + random 3) * loyalty-block)
+          set orientation max list -100 orientation
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+  
+  if right-percent >= min-threshold and right-percent < soft-threshold [
+    ask users with [orientation > 10 and orientation <= 30] [
+      if orientation-cooldown = 0 [
+        let loyalty-block (1 - loyalty * 0.8)
+        if random-float 1 < (0.12 * loyalty-block) [
+          set orientation orientation + ((2 + random 3) * loyalty-block)
+          set orientation min list 100 orientation
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+  
+  if center-percent >= min-threshold and center-percent < soft-threshold [
+    ask users with [orientation >= -45 and orientation < -30] [
+      if orientation-cooldown = 0 [
+        let loyalty-block (1 - loyalty * 0.8)
+        if random-float 1 < (0.10 * loyalty-block) [
+          set orientation orientation + ((3 + random 4) * loyalty-block)
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+    ask users with [orientation > 30 and orientation <= 45] [
+      if orientation-cooldown = 0 [
+        let loyalty-block (1 - loyalty * 0.8)
+        if random-float 1 < (0.10 * loyalty-block) [
+          set orientation orientation - ((3 + random 4) * loyalty-block)
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-centrifugal-push
+  let total-users count users
+  let center-users users with [orientation >= -30 and orientation <= 30]
+  let center-percent (count center-users) / total-users
+  
+  if center-percent > 0.50 [
+    let push-strength (center-percent - 0.50) * 2
+    
+    ask users with [orientation >= -30 and orientation < -10] [
+      if orientation-cooldown = 0 [
+        ;; LOYALTY BLOKIRA POLARIZACIJU
+        let loyalty-block (1 - loyalty * 0.8)
+        
+        let vulnerability (1 - satisfaction) * 0.4 + (anger / 100) * 0.3 + (1 - educated) * 0.3
+        let push-chance push-strength * vulnerability * 0.25 * loyalty-block
+        
+        if random-float 1 < push-chance [
+          set orientation orientation - ((3 + random 5) * loyalty-block)
+          set orientation max list -100 orientation
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+    
+    ask users with [orientation > 10 and orientation <= 30] [
+      if orientation-cooldown = 0 [
+        let loyalty-block (1 - loyalty * 0.8)
+        let vulnerability (1 - satisfaction) * 0.4 + (anger / 100) * 0.3 + (1 - educated) * 0.3
+        let push-chance push-strength * vulnerability * 0.25 * loyalty-block
+        
+        if random-float 1 < push-chance [
+          set orientation orientation + ((3 + random 5) * loyalty-block)
+          set orientation min list 100 orientation
+          set orientation-cooldown 20
+          update-user-color
+        ]
+      ]
+    ]
+    
+    ask users with [orientation >= -10 and orientation <= 10] [
+      if orientation-cooldown = 0 [
+        if satisfaction < 0.3 and anger > 50 and educated < 0.4 [
+          let loyalty-block (1 - loyalty * 0.8)
+          let push-chance push-strength * 0.15 * loyalty-block
+          if random-float 1 < push-chance [
+            ifelse random 2 = 0 [
+              set orientation orientation - ((5 + random 8) * loyalty-block)
+            ] [
+              set orientation orientation + ((5 + random 8) * loyalty-block)
+            ]
+            set orientation max list -100 min list 100 orientation
+            set orientation-cooldown 20
+            update-user-color
+          ]
+        ]
+      ]
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; PRIRODNA DERADIKALIZACIJA
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-natural-deradicalization
+  ask users [
+    if orientation-cooldown = 0 [
+      let my-radicalization abs orientation
+      
+      let similar-neighbors count (users in-radius 4) with [
+        abs (orientation - [orientation] of myself) < 20
+      ]
+      let in-echo-chamber similar-neighbors >= 3
+      
+      
+      let deradicalization-chance 0
+      
+      if my-radicalization > 30 [
+        set deradicalization-chance 0.05 * educated + 0.02
+        
+        set deradicalization-chance deradicalization-chance + 0.03 * satisfaction
+        
+        set deradicalization-chance deradicalization-chance * (1 - anger / 300)
+        
+        if in-echo-chamber [
+          set deradicalization-chance deradicalization-chance * 0.5
+        ]
+        
+        set deradicalization-chance deradicalization-chance * (1 - loyalty * 0.3)
+        
+        if random-float 1 < deradicalization-chance [
+          let move-amount 1.0 + (my-radicalization / 100) * 2.0
+          
+          if orientation > 0 [
+            set orientation orientation - move-amount
+          ]
+          if orientation < 0 [
+            set orientation orientation + move-amount
+          ]
+          
+          update-user-color
+        ]
+      ]
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+to media-check-events
+  
+  ask orgs [
+    if article-cooldown > 0 [
+      set article-cooldown article-cooldown - 1
+    ]
+  ]
+  
+  
+  ask orgs [
+    if article-cooldown = 0 [
+      let publish-chance 0.08 + (social-tension / 100) * 0.07
+      
+      if random-float 1 < publish-chance [
+        media-publish-article
+        set article-cooldown 10
+      ]
+    ]
+  ]
+end
+
+to media-publish-article
+  
+  let radical-percent 0
+  if org-type = "left" [ set radical-percent blue-org-radical ]
+  if org-type = "center" [ set radical-percent green-org-radical ]
+  if org-type = "right" [ set radical-percent red-org-radical ]
+  
+  let is-radical random-float 100 < radical-percent
+  
+  let article-bias orientation
+  if is-radical [
+    set article-bias article-bias * 1.5
+    if article-bias > 100 [ set article-bias 100 ]
+    if article-bias < -100 [ set article-bias -100 ]
+  ]
+  
+  let original-color color
+  set color white
+  set size 4
+  
+  ask users [
+    apply-media-article-to-user article-bias is-radical [org-type] of myself
+  ]
+  
+  set color original-color
+  set size 3
+end
+
+to apply-media-article-to-user [ article-bias is-radical media-type ]
+  let my-trust 0
+  if media-type = "left" [ set my-trust trust-left ]
+  if media-type = "center" [ set my-trust trust-center ]
+  if media-type = "right" [ set my-trust trust-right ]
+  
+  
+  let read-chance my-trust * 0.8
+  if my-trust < 0.3 [
+    set read-chance my-trust * 0.3
+  ]
+  
+  set read-chance read-chance + educated * 0.15
+  
+  if random-float 1 < read-chance [
+    
+    if is-radical [
+      let trust-drop 0.08 + random-float 0.05
+      
+      set trust-drop trust-drop * (1 + educated * 0.5)
+      
+      if media-type = "left" [ 
+        set trust-left trust-left - trust-drop 
+        if trust-left < 0.1 [ set trust-left 0.1 ]
+      ]
+      if media-type = "center" [ 
+        set trust-center trust-center - trust-drop
+        if trust-center < 0.1 [ set trust-center 0.1 ]
+      ]
+      if media-type = "right" [ 
+        set trust-right trust-right - trust-drop
+        if trust-right < 0.1 [ set trust-right 0.1 ]
+      ]
+    ]
+    if not is-radical [
+      let trust-gain 0.03 + random-float 0.02
+      
+      if media-type = "left" [ 
+        set trust-left trust-left + trust-gain 
+        if trust-left > 1 [ set trust-left 1 ]
+      ]
+      if media-type = "center" [ 
+        set trust-center trust-center + trust-gain
+        if trust-center > 1 [ set trust-center 1 ]
+      ]
+      if media-type = "right" [ 
+        set trust-right trust-right + trust-gain
+        if trust-right > 1 [ set trust-right 1 ]
+      ]
+    ]
+    
+    let influence-strength my-trust * (1 - loyalty * 0.6) * 0.15
+    
+    let opinion-diff article-bias - orientation
+    let direction-match? (orientation > 0 and article-bias > 0) or (orientation < 0 and article-bias < 0) or (abs orientation < 20)
+    
+    if not direction-match? [
+      set influence-strength influence-strength * 0.3
+    ]
+    
+    if orientation-cooldown = 0 [
+      let orientation-change opinion-diff * influence-strength * 0.1
+      set orientation orientation + orientation-change
+      
+      if orientation > 100 [ set orientation 100 ]
+      if orientation < -100 [ set orientation -100 ]
+      
+      update-user-color
+    ]
+    
+    if is-radical [
+      let anger-increase sensitivity * 3 * (1 - educated * 0.3)
+      set anger anger + anger-increase
+      if anger > 100 [ set anger 100 ]
+    ]
+    if not is-radical [
+      let anger-decrease educated * 1.5
+      set anger anger - anger-decrease
+      if anger < 0 [ set anger 0 ]
+    ]
+  ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; BACKGROUND PROCESSES
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-background-anger
+  ask users [
+    let base-frustration social-tension * 0.06
+    
+    let frustration-increase base-frustration * (1 - satisfaction) * sensitivity
+    
+    let radicalization-factor (abs orientation) / 100
+    set frustration-increase frustration-increase * (1 + radicalization-factor * 1.0)
+    
+    set frustration-increase frustration-increase * (1 + (1 - educated) * 0.4)
+    
+    if sensitivity > 0.7 [
+      set frustration-increase frustration-increase * 1.4
+    ]
+    
+    set anger anger + frustration-increase
+    
+    let cooling-rate 0.04 * educated + 0.02
+    if sensitivity > 0.7 [
+      set cooling-rate cooling-rate * 0.5
+    ]
+    set anger anger - cooling-rate
+    
+    if anger > 100 [ set anger 100 ]
+    if anger < 0 [ set anger 0 ]
+    
+    update-user-color
+  ]
+end
+
+to apply-satisfaction-decay
+  
+  ask users [
+    set chronic-anger chronic-anger * 0.90 + anger * 0.10
+    if chronic-anger > 100 [ set chronic-anger 100 ]
+    if chronic-anger < 0 [ set chronic-anger 0 ]
+    
+    let p [prosperity] of patch-here
+    
+    let base-satisfaction 0.3 + (p * 0.5)
+    
+    let educated-factor educated * 0.10
+    
+    let anger-penalty (chronic-anger / 100) * 0.35
+    
+    let radical-penalty (abs orientation / 100) * 0.08
+    
+    let echo-comfort 0
+    if abs orientation > 30 [
+      let similar-neighbors count (users in-radius 4) with [
+        abs (orientation - [orientation] of myself) < 25
+      ]
+      if similar-neighbors > 3 [ set echo-comfort 0.05 ]
+      if similar-neighbors > 6 [ set echo-comfort 0.10 ]
+    ]
+    
+    let my-group-size 0
+    let total-users count users
+    ifelse orientation < -30 [
+      set my-group-size count users with [orientation < -30]
+    ] [
+      ifelse orientation > 30 [
+        set my-group-size count users with [orientation > 30]
+      ] [
+        set my-group-size count users with [orientation >= -30 and orientation <= 30]
+      ]
+    ]
+    let group-representation my-group-size / total-users
+    let social-boost 0
+    if abs orientation > 30 and group-representation > 0.25 [
+      set social-boost 0.05
+    ]
+    
+    let target-satisfaction base-satisfaction + educated-factor + echo-comfort + social-boost - anger-penalty - radical-penalty
+    set target-satisfaction max list 0.1 min list 1 target-satisfaction
+    
+    let diff target-satisfaction - satisfaction
+    let change diff * 0.05
+    
+    set satisfaction satisfaction + change
+    if satisfaction < 0.1 [ set satisfaction 0.1 ]
+    if satisfaction > 1 [ set satisfaction 1 ]
+    
+    if satisfaction > 0.5 [
+      set anger anger - (satisfaction - 0.5) * 0.5
+    ]
+    if anger > 100 [ set anger 100 ]
+    if anger < 0 [ set anger 0 ]
+    
+    compute-anger-threshold
+  ]
+end
+
+to generate-spontaneous-media-posts
+  if count orgs = 0 [ stop ]
+  
+  let num-posting-orgs 1 + random 2
+  
+  if num-posting-orgs > count orgs [ set num-posting-orgs count orgs ]
+  
+  ask n-of num-posting-orgs orgs [
+    hatch-posts 1 [
+      set shape "circle"
+      set size 2.5
+      set radius [coverage] of myself
+      set creator myself
+      set age 0
+      set applied? false
+      
+      let media-type [org-type] of myself
+      let media-orientation [orientation] of myself
+      
+      if media-type = "neutral" [
+        set seriousness 2
+        set hateful 45 + random 10
+        set color yellow
+      ]
+      
+      if media-type = "left" [
+        set seriousness 2 + random 2
+        set hateful 20 + random 20
+        set color blue
+      ]
+      
+      if media-type = "right" [
+        set seriousness 2 + random 2
+        set hateful 60 + random 20
+        set color orange
+      ]
+    ]
+  ]
+  
+  apply-spontaneous-media-effects
+end
+
+to apply-spontaneous-media-effects
+  ask posts with [shape = "circle" and not applied?] [
+    let org-orientation [orientation] of creator
+    let org-media-type [org-type] of creator
+    let post-seriousness seriousness
+    let post-hateful hateful
+    
+    ask users [
+      let should-affect false
+      let effect-strength 0.15
+      
+      if org-media-type = "neutral" [
+        set should-affect true
+        set effect-strength 0.12
+      ]
+      
+      if org-media-type = "left" and orientation < -30 [
+        set should-affect true
+        set effect-strength 0.18
+      ]
+      
+      if org-media-type = "right" and orientation > 30 [
+        set should-affect true
+        set effect-strength 0.18
+      ]
+      
+      if should-affect [
+        let my-conviction abs orientation / 100
+        let inertia-factor 1 - (my-conviction * 0.8)
+        
+        let anger-change post-seriousness * effect-strength * 0.5 * inertia-factor
+        set anger anger + anger-change * sensitivity
+        if anger > 100 [ set anger 100 ]
+        
+        if orientation-cooldown = 0 [
+          let loyalty-block (1 - loyalty * 0.8)
+          let old-orientation orientation
+          
+          let orientation-diff org-orientation - orientation
+          let orientation-shift orientation-diff * effect-strength * 0.05 * inertia-factor * loyalty-block
+          set orientation orientation + orientation-shift
+          set orientation max list -100 min list 100 orientation
+          
+          if abs (orientation - old-orientation) > 5 [
+            set orientation-cooldown 20
+          ]
+        ]
+        
+        update-user-color
+      ]
+      
+      if not should-affect [
+        let viewer-radicalization abs orientation / 100
+        let opposite-side false
+        
+        if org-media-type = "left" and orientation > 40 [ set opposite-side true ]
+        if org-media-type = "right" and orientation < -40 [ set opposite-side true ]
+        
+        if opposite-side and viewer-radicalization > 0.7 and sensitivity > 0.6 [
+          let backfire-anger post-seriousness * 0.5 * sensitivity * (1 - educated)
+          set anger anger + backfire-anger
+          if anger > 100 [ set anger 100 ]
+          
+          ;; LOYALTY I COOLDOWN CHECK
+          if orientation-cooldown = 0 [
+            let loyalty-block (1 - loyalty * 0.8)
+            let inertia-factor 1 - (viewer-radicalization * 0.9)
+            if orientation > 0 [
+              set orientation orientation + (0.3 * inertia-factor * loyalty-block)
+            ]
+            if orientation < 0 [
+              set orientation orientation - (0.3 * inertia-factor * loyalty-block)
+            ]
+            set orientation max list -100 min list 100 orientation
+          ]
+          
+          update-user-color
+        ]
+      ]
+    ]
+    
+    set applied? true
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; POST GENERATION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to generate-posts
+  
+  let hate-poster-candidates users with [is-hate-poster?]
+  
+  if any? hate-poster-candidates and hate-posts-per-tick > 0 [
+    let n min list hate-posts-per-tick count hate-poster-candidates
+    ask n-of n hate-poster-candidates [
+      hatch-posts 1 [
+        set shape "circle"
+        set size 0.7
+        set radius [reach] of myself
+        set seriousness 2 + random 4
+        
+        set hateful max list 0 (100 - ([satisfaction] of myself * 100) - ([educated] of myself * 50))
+        
+        let creator-orientation [orientation] of myself
+        ifelse creator-orientation < -30 [
+          set color 105
+        ] [
+          ifelse creator-orientation > 30 [
+            set color 15
+          ] [
+            set color 55
+          ]
+        ]
+        
+        set creator myself
+        set age 0
+        set applied? false
+      ]
+    ]
+  ]
+  
+  let educated-poster-candidates users with [is-educated-poster?]
+  
+  if any? educated-poster-candidates and edu-posts-per-tick > 0 [
+    let n min list edu-posts-per-tick count educated-poster-candidates
+    ask n-of n educated-poster-candidates [
+      hatch-posts 1 [
+        set shape "circle"
+        set size 0.7
+        set radius [reach] of myself
+        set seriousness 1
+        set hateful -50
+        
+        ;; EDUCATED POSTOVI SU BIJELI
+        set color white
+        
+        set creator myself
+        set age 0
+        set applied? false
+      ]
+    ]
+  ]
+  
+  let clout-poster-candidates users with [is-clout-poster?]
+  let existing-posts posts with [age < 3]
+  
+  if any? clout-poster-candidates and any? existing-posts and clout-posts-per-tick > 0 [
+    let posts-to-copy min list clout-posts-per-tick count existing-posts
+    let chasers-to-use min list posts-to-copy count clout-poster-candidates
+    
+    if chasers-to-use > 0 [
+      let selected-posts n-of chasers-to-use existing-posts
+      let selected-chasers n-of chasers-to-use clout-poster-candidates
+      
+      (foreach (sort selected-chasers) (sort selected-posts) [ [chaser original-post] ->
+        ask chaser [
+          hatch-posts 1 [
+            set shape "circle"
+            set size 0.7
+            set radius [reach] of myself * (1 + [aggressiveness] of myself)
+            
+            set seriousness [seriousness] of original-post
+            set hateful [hateful] of original-post
+            
+            let original-creator [creator] of original-post
+            if original-creator != nobody [
+              let orig-orientation [orientation] of original-creator
+              ifelse orig-orientation < -30 [
+                set color 105
+              ] [
+                ifelse orig-orientation > 30 [
+                  set color 15
+                ] [
+                  set color 55
+                ]
+              ]
+            ]
+            
+            set creator myself
+            set age 0
+            set applied? false
+          ]
+        ]
+      ])
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; APPLY EFFECTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-post-effects
+  ask posts with [not applied?] [
+    
+    ifelse hateful < 0 [
+      apply-stabilizing-post-effects
+    ] [
+      let post-orientation [orientation] of creator
+      let post-color color
+      
+      let creator-radicalization abs post-orientation
+      let echo-threshold 20 + (creator-radicalization * 0.25)
+      
+      let viewers users in-radius radius with [
+        self != [creator] of myself and
+        abs (orientation - post-orientation) < echo-threshold
+      ]
+
+    if any? viewers [
+
+      ask viewers [
+        let anger-increase [seriousness] of myself * sensitivity * 0.8
+        
+        set anger-increase anger-increase * (1 - educated * 0.6)
+        
+        if sensitivity > 0.7 [
+          set anger-increase anger-increase * 1.5
+        ]
+        
+        set anger anger + anger-increase
+        set anger min list anger 100
+
+        
+        let base-influence 0.06 * (1 - educated * 0.85)
+        
+        let my-conviction abs orientation / 100
+        let inertia-factor 1 - (my-conviction * 0.6)
+        
+        let emotional-boost [seriousness] of myself / 4
+        
+        let influence-strength base-influence * inertia-factor * emotional-boost
+        
+        let radicalization-push 0
+        let old-orientation orientation
+        
+        ifelse orientation-cooldown > 0 [
+          set radicalization-push 0
+        ] [
+          let loyalty-block (1 - loyalty * 0.8)
+          
+          ifelse abs post-orientation <= 30 [
+            if orientation > 5 [
+              set radicalization-push influence-strength * 3 * loyalty-block
+            ]
+            if orientation < -5 [
+              set radicalization-push (- influence-strength * 3 * loyalty-block)
+            ]
+            if orientation >= -5 and orientation <= 5 [
+              ifelse random 2 = 0 [
+                set radicalization-push influence-strength * 2 * loyalty-block
+              ] [
+                set radicalization-push (- influence-strength * 2 * loyalty-block)
+              ]
+            ]
+          ] [
+            
+            let same-side? (post-orientation * orientation > 0)
+            
+            ifelse same-side? [
+              if orientation > 0 [
+                set radicalization-push influence-strength * 2.5 * loyalty-block
+              ]
+              if orientation < 0 [
+                set radicalization-push (- influence-strength * 2.5 * loyalty-block)
+              ]
+            ] [
+              if orientation > 0 [
+                set radicalization-push influence-strength * 1.5 * loyalty-block
+              ]
+              if orientation < 0 [
+                set radicalization-push (- influence-strength * 1.5 * loyalty-block)
+              ]
+            ]
+            
+            if abs orientation <= 5 [
+              let orientation-diff post-orientation - orientation
+              set radicalization-push orientation-diff * influence-strength * 0.1 * loyalty-block
+            ]
+          ]
+        ]
+        
+        set orientation orientation + radicalization-push
+        set orientation max list -100 min list 100 orientation
+        
+        if abs (orientation - old-orientation) > 5 [
+          set orientation-cooldown 20
+        ]
+
+        let orientation-similarity abs (orientation - post-orientation)
+        let like-probability ([hateful] of myself / 100) * (1 - orientation-similarity / 100)
+        
+        if random-float 1 < like-probability [
+          ask [creator] of myself [
+            set reach reach + 0.1
+            if reach > 15 [ set reach 15 ]
+          ]
+        ]
+        
+        if random-float 1 < (1 - like-probability) * 0.3 [
+          ask [creator] of myself [
+            set reach reach - 0.1
+            if reach < 1 [ set reach 1 ]
+          ]
+        ]
+
+        update-user-color
+      ]
+
+      ask viewers [
+        create-post-link-from [creator] of myself [
+          set color post-color
+          set thickness 0.25
+          set link-age 0
+        ]
+      ]
+    ]
+
+      set applied? true
+    ]
+  ]
+end
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to trigger-events
+  ask users with [anger > anger-threshold and abs orientation > 50] [
+    let event-chance (anger - anger-threshold) / 100 * 0.02
+    
+    if orientation-cooldown = 0 and random-float 1 < event-chance [
+      let event-type "protest"
+      if anger > 80 [
+        set event-type "attack"
+      ]
+      
+      set event-count event-count + 1
+      
+      set last-event-type event-type
+      set last-event-orientation orientation
+      
+      if count orgs > 0 [
+        generate-org-posts event-type orientation
+      ]
+      
+      ask orgs [
+        if abs (orientation - [orientation] of myself) < 40 [
+          set reputation reputation + 1
+        ]
+        if abs (orientation - [orientation] of myself) > 80 [
+          set reputation reputation - 1
+        ]
+      ]
+
+      set anger anger * 0.4
+      set orientation-cooldown 50
+      update-user-color
+    ]
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to generate-org-posts [event-type event-orientation]
+  if count orgs = 0 [ stop ]
+  
+  ask orgs [
+    if random-float 100 < 50 [
+      hatch-posts 1 [
+        set shape "circle"
+      set size 3.0
+      set radius [coverage] of myself
+      set creator myself
+      set age 0
+      set applied? false
+      
+      if [org-type] of myself = "neutral" [
+        set seriousness 3
+        set hateful 50
+        set color pink
+      ]
+      
+      if [org-type] of myself = "left" [
+        ifelse event-orientation < 0 [
+          set seriousness 2
+          set hateful 30
+        ] [
+          set seriousness 5
+          set hateful 80
+        ]
+        set color pink
+      ]
+      
+      if [org-type] of myself = "right" [
+        ifelse event-orientation > 0 [
+          set seriousness 2
+          set hateful 30
+        ] [
+          set seriousness 5
+          set hateful 80
+        ]
+        set color pink
+      ]
+    ]
+    ]
+  ]
+  
+  apply-org-post-effects event-type event-orientation
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ORG POST EFFECTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to apply-org-post-effects [event-type event-orientation]
+  ask posts with [shape = "circle" and not applied?] [
+    let org-orientation [orientation] of creator
+    let org-media-type [org-type] of creator
+    let post-seriousness seriousness
+    let post-hateful hateful
+    
+    ask users [
+      
+      let should-affect false
+      let effect-strength 0.5
+      
+      if org-media-type = "neutral" [
+        set should-affect true
+        set effect-strength 0.4
+      ]
+      
+      if org-media-type = "left" and orientation < -30 [
+        set should-affect true
+        set effect-strength 0.6
+      ]
+      
+      if org-media-type = "right" and orientation > 30 [
+        set should-affect true
+        set effect-strength 0.6
+      ]
+      
+      if should-affect [
+        let my-conviction abs orientation / 100
+        let inertia-factor 1 - (my-conviction * 0.8)
+        
+        let anger-change post-seriousness * effect-strength * 1.0 * inertia-factor
+        
+        if event-type = "attack" [
+          if abs (orientation - event-orientation) > 50 [
+            set anger-change anger-change * (1 - educated * 0.5)
+          ]
+        ]
+        
+        set anger anger + anger-change * sensitivity
+        set anger min list anger 100
+        
+        if orientation-cooldown = 0 [
+          let loyalty-block (1 - loyalty * 0.8)
+          let old-orientation orientation
+          
+          let orientation-diff org-orientation - orientation
+          let orientation-shift orientation-diff * effect-strength * 0.03 * inertia-factor * loyalty-block
+          set orientation orientation + orientation-shift
+          set orientation max list -100 min list 100 orientation
+          
+          if abs (orientation - old-orientation) > 5 [
+            set orientation-cooldown 20
+          ]
+        ]
+        
+        if event-type = "attack" [
+          set satisfaction satisfaction * (0.95 - educated * 0.05)
+          if satisfaction < 0 [ set satisfaction 0 ]
+        ]
+        
+        update-user-color
+      ]
+      
+      if not should-affect [
+        let viewer-radicalization abs orientation / 100
+        let opposite-side false
+        
+        if org-media-type = "left" and orientation > 40 [ set opposite-side true ]
+        if org-media-type = "right" and orientation < -40 [ set opposite-side true ]
+        
+        if opposite-side and viewer-radicalization > 0.7 and sensitivity > 0.6 [
+          let inertia-factor 1 - (viewer-radicalization * 0.9)
+          let backfire-anger post-seriousness * 1.0 * sensitivity * (1 - educated)
+          set anger anger + backfire-anger
+          if anger > 100 [ set anger 100 ]
+          
+          ;; LOYALTY I COOLDOWN CHECK
+          if orientation-cooldown = 0 [
+            let loyalty-block (1 - loyalty * 0.8)
+            if orientation > 0 [
+              set orientation orientation + (0.5 * inertia-factor * loyalty-block)
+            ]
+            if orientation < 0 [
+              set orientation orientation - (0.5 * inertia-factor * loyalty-block)
+            ]
+            set orientation max list -100 min list 100 orientation
+          ]
+          
+          update-user-color
+        ]
+      ]
+    ]
+    
+    set applied? true
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; VISUALS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to update-user-color
+  if is-hate-poster? [
+    set color black
+    set size 1 + (anger / 100)
+    stop
+  ]
+  
+  if is-educated-poster? [
+    set color white
+    set size 1 + (anger / 100)
+    stop
+  ]
+  
+  if is-clout-poster? [
+    set color 45
+    set size 1 + (anger / 100)
+    stop
+  ]
+  
+  
+  ifelse orientation < -30 [
+    ;; LIJEVI - PLAVA
+    ifelse abs orientation > 70 [
+      set color 102
+    ] [
+      set color 105
+    ]
+  ] [
+    ifelse orientation > 30 [
+      ;; DESNI - CRVENA
+      ifelse abs orientation > 70 [
+        set color 12
+      ] [
+        set color 15
+      ]
+    ] [
+      ;; CENTAR - ZELENA
+      set color 55
+    ]
+  ]
+  
+  set size 1 + (anger / 100)
+end
+
+to-report polarization-index
+  report standard-deviation [orientation] of users
+end
+
+to-report avg-loyalty
+  report mean [loyalty] of users
+end
+
+to-report echo-chamber-index
+  let total-links count post-links
+  if total-links = 0 [ report 0 ]
+  
+  let same-side-links count post-links with [
+    [orientation] of end1 * [orientation] of end2 > 0
+  ]
+  report (same-side-links / total-links) * 100
+end
+
+to-report avg-radicalization
+  report mean [abs orientation] of users
+end
+
+to-report avg-anger-threshold
+  report mean [anger-threshold] of users
+end
+
+]]></code>
+  <widgets>
+    <view x="368" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-16" height="434" showTickCounter="true" patchSize="13.0" fontSize="10" wrappingAllowedY="true" width="434" tickCounterLabel="ticks" maxPycor="16" updateMode="1" maxPxcor="16" minPxcor="-16"></view>
+    <button x="10" y="10" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="55" display="setup">setup</button>
+    <button x="70" y="10" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="55" display="go">go</button>
+    <button x="130" y="10" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="61" display="go once">go</button>
+    <plot x="1070" autoPlotX="true" yMax="100.0" autoPlotY="true" y="15" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="Average Anger">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Anger" color="-2674135" legend="true">
+        <setup></setup>
+        <update>plot mean [anger] of users</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Threshold" color="-7500403" legend="true">
+        <setup></setup>
+        <update>plot avg-anger-threshold</update>
+      </pen>
+    </plot>
+    <plot x="1310" autoPlotX="true" yMax="1.0" autoPlotY="true" y="15" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="Average Satisfaction">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Satisfaction" color="-10899396" legend="true">
+        <setup></setup>
+        <update>plot mean [satisfaction] of users</update>
+      </pen>
+    </plot>
+    <plot x="825" autoPlotX="true" yMax="10.0" autoPlotY="true" y="15" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="Events Count">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Total Events" color="-16777216" legend="true">
+        <setup></setup>
+        <update>plot event-count</update>
+      </pen>
+    </plot>
+    <plot x="825" autoPlotX="true" yMax="10.0" autoPlotY="true" y="195" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="Angry Users &amp; Events">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Angry Users" color="-2674135" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ anger > anger-threshold ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Stabilizers" color="-13791810" legend="true">
+        <setup></setup>
+        <update>plot count users with [ is-educated-poster? ]</update>
+      </pen>
+    </plot>
+    <slider x="5" step="1" y="455" max="100" width="150" display="hate-posters" height="50" min="0" direction="Horizontal" default="100.0" variable="hate-posters"></slider>
+    <slider x="490" step="1" y="575" max="30" width="150" display="top-influencer-percent" height="50" min="1" direction="Horizontal" default="10.0" variable="top-influencer-percent"></slider>
+    <slider x="0" step="5" y="575" max="100" width="150" display="red-org-radical" height="50" min="0" direction="Horizontal" default="85.0" variable="red-org-radical"></slider>
+    <slider x="655" step="0.1" y="450" max="10" width="150" display="social-tension" height="50" min="0" direction="Horizontal" default="5.0" variable="social-tension"></slider>
+    <slider x="650" step="0.05" y="515" max="1" width="150" display="avg-aggressiveness" height="50" min="0.1" direction="Horizontal" default="0.5" variable="avg-aggressiveness"></slider>
+    <slider x="490" step="1" y="515" max="100" width="150" display="educated-percent" height="50" min="0" direction="Horizontal" default="50.0" variable="educated-percent"></slider>
+    <slider x="325" step="1" y="515" max="20" width="150" display="clout-posts-per-tick" height="50" min="0" direction="Horizontal" default="20.0" variable="clout-posts-per-tick"></slider>
+    <slider x="5" step="1" y="515" max="20" width="150" display="hate-posts-per-tick" height="50" min="0" direction="Horizontal" default="20.0" variable="hate-posts-per-tick"></slider>
+    <input x="5" multiline="false" y="255" height="60" variable="seed" type="number" width="250">1.0</input>
+    <slider x="190" step="1" y="60" max="100" width="170" display="num-posters" height="50" min="1" direction="Horizontal" default="60.0" variable="num-posters"></slider>
+    <slider x="10" step="1" y="60" max="1000" width="170" display="user-num" height="50" min="50" direction="Horizontal" default="425.0" variable="user-num"></slider>
+    <slider x="325" step="5" y="575" max="100" width="150" display="green-org-radical" height="50" min="0" direction="Horizontal" default="5.0" variable="green-org-radical"></slider>
+    <slider x="165" step="5" y="575" max="100" width="150" display="blue-org-radical" height="50" min="0" direction="Horizontal" default="0.0" variable="blue-org-radical"></slider>
+    <slider x="165" step="1" y="515" max="20" width="150" display="edu-posts-per-tick" height="50" min="0" direction="Horizontal" default="1.0" variable="edu-posts-per-tick"></slider>
+    <slider x="165" step="1" y="455" max="100" width="150" display="educated-posters" height="50" min="0" direction="Horizontal" default="100.0" variable="educated-posters"></slider>
+    <slider x="325" step="1" y="455" max="100" width="150" display="clout-posters" height="50" min="0" direction="Horizontal" default="100.0" variable="clout-posters"></slider>
+    <slider x="490" step="1" y="455" max="100" width="150" display="loyalty-percent" height="50" min="0" direction="Horizontal" default="51.0" variable="loyalty-percent"></slider>
+    <monitor x="10" precision="2" y="325" height="60" fontSize="11" width="100" display="Polarization">polarization-index</monitor>
+    <monitor x="10" precision="2" y="390" height="60" fontSize="11" width="100" display="Radikalizacija">avg-radicalization</monitor>
+    <monitor x="265" precision="17" y="385" height="60" fontSize="11" width="100" display="Plavi"><![CDATA[count users with [ orientation < -30 ]]]></monitor>
+    <monitor x="265" precision="17" y="320" height="60" fontSize="11" width="100" display="Zeleni"><![CDATA[count users with [ orientation >= -30 and orientation <= 30 ]]]></monitor>
+    <monitor x="265" precision="17" y="255" height="60" fontSize="11" width="100" display="Crveni"><![CDATA[count users with [ orientation > 30 ]]]></monitor>
+    <monitor x="145" precision="2" y="325" height="60" fontSize="11" width="100" display="Echo %">echo-chamber-index</monitor>
+    <monitor x="145" precision="2" y="390" height="60" fontSize="11" width="100" display="Avg Loyalty">avg-loyalty</monitor>
+    <plot x="820" autoPlotX="true" yMax="1.0" autoPlotY="false" y="385" xMin="0.0" height="165" legend="true" xMax="10.0" yMin="0.0" width="225" display="Avg Media Trust">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Trust Left" color="-13345367" legend="true">
+        <setup></setup>
+        <update>plot mean [trust-left] of users</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Trust Center" color="-14439168" legend="true">
+        <setup></setup>
+        <update>plot mean [trust-center] of users</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Trust Right" color="-2674135" legend="true">
+        <setup></setup>
+        <update>plot mean [trust-right] of users</update>
+      </pen>
+    </plot>
+    <plot x="1070" autoPlotX="true" yMax="100.0" autoPlotY="true" y="385" xMin="0.0" height="165" legend="true" xMax="10.0" yMin="0.0" width="225" display="Echo Chamber Index">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Echo %" color="-11221820" legend="true">
+        <setup></setup>
+        <update>plot echo-chamber-index</update>
+      </pen>
+    </plot>
+    <plot x="1070" autoPlotX="true" yMax="100.0" autoPlotY="true" y="195" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="Polarization Index">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Polarization" color="-8630108" legend="true">
+        <setup></setup>
+        <update>plot polarization-index</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Avg Radicalization" color="-5825686" legend="true">
+        <setup></setup>
+        <update>plot avg-radicalization</update>
+      </pen>
+    </plot>
+    <plot x="1315" autoPlotX="true" yMax="10.0" autoPlotY="true" y="195" xMin="0.0" height="175" legend="true" xMax="10.0" yMin="0.0" width="230" display="3 Grupe LCR">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Lijevi" color="-13345367" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation < -30 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Centar" color="-14439168" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation >= -30 and orientation <= 30 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Desni" color="-2674135" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation > 30 ]]]></update>
+      </pen>
+    </plot>
+    <plot x="1315" autoPlotX="true" yMax="100.0" autoPlotY="true" y="385" xMin="0.0" height="170" legend="true" xMax="10.0" yMin="0.0" width="230" display="Spektar 5 zona">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Ekstr L" color="-16776961" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation < -60 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Umjer L" color="-11033217" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation >= -60 and orientation < -30 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Centar" color="-14439168" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation >= -30 and orientation <= 30 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Umjer D" color="-817920" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation > 30 and orientation <= 60 ]]]></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Ekstr D" color="-2674135" legend="true">
+        <setup></setup>
+        <update><![CDATA[plot count users with [ orientation > 60 ]]]></update>
+      </pen>
+    </plot>
+    <monitor x="265" precision="2" y="185" height="60" fontSize="11" width="100" display="Avg Education">mean [educated] of users</monitor>
+    <monitor x="5" precision="17" y="185" height="60" fontSize="11" width="250"><![CDATA[count users with [anger >= 50]]]></monitor>
+    <monitor x="10" precision="17" y="120" height="60" fontSize="11" width="245"><![CDATA[count users with [ satisfaction >= 0.5 ]]]></monitor>
+    <monitor x="265" precision="2" y="120" height="60" fontSize="11" width="100" display="Avg Sensitivity">mean [sensitivity] of users</monitor>
+  </widgets>
+  <info><![CDATA[## 🎯 CILJ SIMULACIJE
+
+Ovaj model simulira **društvenu polarizaciju** u doba društvenih mreža. Istražuje kako:
+
+1. 🔄 **Echo chambersi** pojačavaju polarizaciju - ljudi vide samo slične stavove
+2. 📰 **Pristrani mediji** manipuliraju javnim mnijenjem kroz selektivno izvještavanje
+3. 👤 **Clout chaseri** kopiraju ekstremna mišljenja radi popularnosti
+4. 🎓 **Obrazovanje** smanjuje podložnost radikalizaciji
+5. 📉 **Ekonomsko nezadovoljstvo** vodi ka ljutnji i potencijalnom nasilju
+
+---
+
+## 🔧 KAKO RADI
+
+### AGENTI:
+- **KORISNICI (osobe)**: Imaju političku orijentaciju (-100 lijevo do +100 desno), ljutnju, zadovoljstvo, obrazovanje
+- **POSTOVI (krugovi/zvijezde)**: Hate postovi (crveni krugovi) vs. stabilizacijski postovi (plave zvijezde)
+- **MEDIJI (kvadrati)**: Neutralni (žuti), lijevi (plavi), desni (narančasti)
+
+### BOJE KORISNIKA:
+- 🔵 **PLAVA** = Lijeva orijentacija (orientation < -40)
+- 🟢 **ZELENA** = Centar (-40 do +40)
+- 🟠 **NARANČASTA** = Desna orijentacija (orientation > +40)
+- **VELIČINA** = Razina ljutnje (veći = ljući)
+
+### MEHANIZMI:
+- **Echo Chamber**: Korisnici vide samo postove sličnih orijentacija
+- **Backfire Effect**: Radikali se VIŠE ljute kada vide suprotne stavove
+- **Clout Chasing**: Ambiciozni korisnici kopiraju popularne influencere
+- **Hedonic Treadmill**: Zadovoljstvo polako pada, ljutnja raste
+- **Pride Mechanism**: Ugrožene grupe brane svoj identitet (5% tvrdi pod)
+- **Anti-Centar Mechanism**: Preveliki centar (>50%) se polarizira
+- **LOYALTY**: Lojalni korisnici se teže radikaliziraju (blokira promjenu orijentacije)
+- **Cooling-off Period**: 20 tickova imuniteta nakon promjene orijentacije
+- **Economic Penalty**: Radikali (|orientation|>70) gube satisfaction
+
+---
+
+## 🎮 KAKO KORISTITI
+
+### OSNOVNI SLIDERI:
+- **user-num**: Broj korisnika u simulaciji
+- **org-num**: Broj medijskih organizacija (0 = bez medija)
+- **num-posters**: Ukupan broj postova po koraku
+
+### SLIDERI ZA EKSPERIMENTE:
+- **hate-posters / educated-posters**: Udjeli tipova postera (normaliziraju se na 100%)
+- **educated-percent**: % obrazovanih korisnika (smanjuje radikalizaciju)
+- **loyalty-percent**: % lojalnih korisnika (otporni na promjenu uvjerenja)
+- **social-tension**: Bazna razina društvene napetosti
+
+---
+
+## 📊 KLJUČNI GRAFOVI
+
+- **Average Anger**: Prosječna ljutnja populacije - višlje = društvo pod stresom
+- **Average Satisfaction**: Prosječno zadovoljstvo - niže = nezadovoljstvo
+- **Political Distribution**: Histogram - ravna linija = zdrava demokracija, U-oblik = polarizacija
+- **Polarization Index**: Standardna devijacija orijentacija - više = veća podijeljenost
+- **Echo Chamber Index**: % interakcija unutar iste političke strane
+- **Events Count**: Protesti i napadi kao krajnja posljedica radikalizacije
+
+---
+
+## 🔬 EKSPERIMENTI ZA ISPROBATI
+
+### Eksperiment 1: Utjecaj obrazovanja
+Povećajte `educated-percent` sa 0% na 80% i promatrajte:
+- Smanjenje prosječne ljutnje
+- Povećanje broja stabilizatora
+- Sporiju radikalizaciju
+
+### Eksperiment 2: Svijet bez medija
+Postavite `org-num = 0` za čisti peer-to-peer model:
+- Kako se polarizacija razvija bez medijskog utjecaja?
+- Da li su echo chambersi dovoljni za radikalizaciju?
+
+### Eksperiment 3: Dominacija hate postera
+Postavite `hate-posters = 100` i `educated-posters = 0`:
+- Svi postovi su hate postovi
+- Promatrajte brzu radikalizaciju
+
+### Eksperiment 4: Visoka napetost
+Postavite `social-tension = 10`:
+- Brza eskalacija ljutnje
+- Više događaja (protesta/napada)
+- Test otpornosti obrazovanja
+
+---
+
+## 🧠 TEORIJSKA POZADINA
+
+Model se temelji na sljedećim konceptima:
+
+- **Echo Chambers** (Sunstein, 2001): Algoritamska filtracija pojačava postojeće stavove
+- **Backfire Effect** (Nyhan & Reifler, 2010): Kontrainformacije mogu pojačati uvjerenja
+- **Hedonic Treadmill** (Brickman & Campbell, 1971): Adaptacija na pozitivne promjene
+- **Social Learning Theory** (Bandura, 1977): Učenje kroz promatranje drugih
+
+---
+
+## 📈 INTERPRETACIJA REZULTATA
+
+### Zdrav scenarij:
+- Prosječna ljutnja < 30
+- Polarization Index < 40
+- Echo Chamber Index < 60%
+- Malo/nikakvih događaja
+
+### Opasan scenarij:
+- Prosječna ljutnja > 60
+- Polarization Index > 60
+- Echo Chamber Index > 80%
+- Česti protesti i napadi
+
+---
+
+## 📚 REFERENCE
+
+- Sunstein, C. R. (2001). Echo Chambers: Bush v. Gore, Impeachment, and Beyond.
+- Pariser, E. (2011). The Filter Bubble.
+- Brady et al. (2017). Emotion shapes the diffusion of moralized content in social networks.
+
+---
+
+*Model razvijen za istraživanje dinamike društvene polarizacije u digitalnom dobu.*
+]]></info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5"></point>
+        <point x="40" y="250"></point>
+        <point x="150" y="205"></point>
+        <point x="260" y="250"></point>
+      </polygon>
+    </shape>
+    <shape name="airplane" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="135" y="15"></point>
+        <point x="120" y="60"></point>
+        <point x="120" y="105"></point>
+        <point x="15" y="165"></point>
+        <point x="15" y="195"></point>
+        <point x="120" y="180"></point>
+        <point x="135" y="240"></point>
+        <point x="105" y="270"></point>
+        <point x="120" y="285"></point>
+        <point x="150" y="270"></point>
+        <point x="180" y="285"></point>
+        <point x="210" y="270"></point>
+        <point x="165" y="240"></point>
+        <point x="180" y="180"></point>
+        <point x="285" y="195"></point>
+        <point x="285" y="165"></point>
+        <point x="180" y="105"></point>
+        <point x="180" y="60"></point>
+        <point x="165" y="15"></point>
+      </polygon>
+    </shape>
+    <shape name="arrow" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="0" y="150"></point>
+        <point x="105" y="150"></point>
+        <point x="105" y="293"></point>
+        <point x="195" y="293"></point>
+        <point x="195" y="150"></point>
+        <point x="300" y="150"></point>
+      </polygon>
+    </shape>
+    <shape name="box" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="285"></point>
+        <point x="285" y="225"></point>
+        <point x="285" y="75"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="135"></point>
+        <point x="15" y="75"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="75"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="75"></point>
+        <point x="15" y="225"></point>
+        <point x="150" y="285"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <line endX="150" startY="285" marked="false" color="255" endY="135" startX="150"></line>
+      <line endX="15" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+      <line endX="285" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+    </shape>
+    <shape name="bug" rotatable="true" editableColorIndex="0">
+      <circle x="96" y="182" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="110" y="127" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <circle x="110" y="75" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <line endX="80" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+      <line endX="220" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+    </shape>
+    <shape name="butterfly" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="209" y="199"></point>
+        <point x="225" y="225"></point>
+        <point x="225" y="255"></point>
+        <point x="195" y="270"></point>
+        <point x="165" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="89" y="198"></point>
+        <point x="75" y="225"></point>
+        <point x="75" y="255"></point>
+        <point x="105" y="270"></point>
+        <point x="135" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="139" y="148"></point>
+        <point x="100" y="105"></point>
+        <point x="55" y="90"></point>
+        <point x="25" y="90"></point>
+        <point x="10" y="105"></point>
+        <point x="10" y="135"></point>
+        <point x="25" y="180"></point>
+        <point x="40" y="195"></point>
+        <point x="85" y="194"></point>
+        <point x="139" y="163"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="162" y="150"></point>
+        <point x="200" y="105"></point>
+        <point x="245" y="90"></point>
+        <point x="275" y="90"></point>
+        <point x="290" y="105"></point>
+        <point x="290" y="135"></point>
+        <point x="275" y="180"></point>
+        <point x="260" y="195"></point>
+        <point x="215" y="195"></point>
+        <point x="162" y="165"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="135" y="225"></point>
+        <point x="120" y="150"></point>
+        <point x="135" y="120"></point>
+        <point x="150" y="105"></point>
+        <point x="165" y="120"></point>
+        <point x="180" y="150"></point>
+        <point x="165" y="225"></point>
+      </polygon>
+      <circle x="135" y="90" marked="false" color="255" diameter="30" filled="true"></circle>
+      <line endX="195" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+      <line endX="105" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+    </shape>
+    <shape name="car" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="300" y="180"></point>
+        <point x="279" y="164"></point>
+        <point x="261" y="144"></point>
+        <point x="240" y="135"></point>
+        <point x="226" y="132"></point>
+        <point x="213" y="106"></point>
+        <point x="203" y="84"></point>
+        <point x="185" y="63"></point>
+        <point x="159" y="50"></point>
+        <point x="135" y="50"></point>
+        <point x="75" y="60"></point>
+        <point x="0" y="150"></point>
+        <point x="0" y="165"></point>
+        <point x="0" y="225"></point>
+        <point x="300" y="225"></point>
+        <point x="300" y="180"></point>
+      </polygon>
+      <circle x="180" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <circle x="30" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="162" y="80"></point>
+        <point x="132" y="78"></point>
+        <point x="134" y="135"></point>
+        <point x="209" y="135"></point>
+        <point x="194" y="105"></point>
+        <point x="189" y="96"></point>
+        <point x="180" y="89"></point>
+      </polygon>
+      <circle x="47" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+      <circle x="195" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+    </shape>
+    <shape name="circle" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="circle 2" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+    </shape>
+    <shape name="cow" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="200" y="193"></point>
+        <point x="197" y="249"></point>
+        <point x="179" y="249"></point>
+        <point x="177" y="196"></point>
+        <point x="166" y="187"></point>
+        <point x="140" y="189"></point>
+        <point x="93" y="191"></point>
+        <point x="78" y="179"></point>
+        <point x="72" y="211"></point>
+        <point x="49" y="209"></point>
+        <point x="48" y="181"></point>
+        <point x="37" y="149"></point>
+        <point x="25" y="120"></point>
+        <point x="25" y="89"></point>
+        <point x="45" y="72"></point>
+        <point x="103" y="84"></point>
+        <point x="179" y="75"></point>
+        <point x="198" y="76"></point>
+        <point x="252" y="64"></point>
+        <point x="272" y="81"></point>
+        <point x="293" y="103"></point>
+        <point x="285" y="121"></point>
+        <point x="255" y="121"></point>
+        <point x="242" y="118"></point>
+        <point x="224" y="167"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="73" y="210"></point>
+        <point x="86" y="251"></point>
+        <point x="62" y="249"></point>
+        <point x="48" y="208"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="25" y="114"></point>
+        <point x="16" y="195"></point>
+        <point x="9" y="204"></point>
+        <point x="23" y="213"></point>
+        <point x="25" y="200"></point>
+        <point x="39" y="123"></point>
+      </polygon>
+    </shape>
+    <shape name="cylinder" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="dot" rotatable="false" editableColorIndex="0">
+      <circle x="90" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+    </shape>
+    <shape name="face happy" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="90" y="239"></point>
+        <point x="62" y="213"></point>
+        <point x="47" y="191"></point>
+        <point x="67" y="179"></point>
+        <point x="90" y="203"></point>
+        <point x="109" y="218"></point>
+        <point x="150" y="225"></point>
+        <point x="192" y="218"></point>
+        <point x="210" y="203"></point>
+        <point x="227" y="181"></point>
+        <point x="251" y="194"></point>
+        <point x="236" y="217"></point>
+        <point x="212" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="face neutral" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="7" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <rectangle endX="240" startY="195" marked="false" color="255" endY="225" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="face sad" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="168"></point>
+        <point x="90" y="184"></point>
+        <point x="62" y="210"></point>
+        <point x="47" y="232"></point>
+        <point x="67" y="244"></point>
+        <point x="90" y="220"></point>
+        <point x="109" y="205"></point>
+        <point x="150" y="198"></point>
+        <point x="192" y="205"></point>
+        <point x="210" y="220"></point>
+        <point x="227" y="242"></point>
+        <point x="251" y="229"></point>
+        <point x="236" y="206"></point>
+        <point x="212" y="183"></point>
+      </polygon>
+    </shape>
+    <shape name="fish" rotatable="false" editableColorIndex="0">
+      <polygon color="-1" filled="true" marked="false">
+        <point x="44" y="131"></point>
+        <point x="21" y="87"></point>
+        <point x="15" y="86"></point>
+        <point x="0" y="120"></point>
+        <point x="15" y="150"></point>
+        <point x="0" y="180"></point>
+        <point x="13" y="214"></point>
+        <point x="20" y="212"></point>
+        <point x="45" y="166"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="135" y="195"></point>
+        <point x="119" y="235"></point>
+        <point x="95" y="218"></point>
+        <point x="76" y="210"></point>
+        <point x="46" y="204"></point>
+        <point x="60" y="165"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="75" y="45"></point>
+        <point x="83" y="77"></point>
+        <point x="71" y="103"></point>
+        <point x="86" y="114"></point>
+        <point x="166" y="78"></point>
+        <point x="135" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="136"></point>
+        <point x="151" y="77"></point>
+        <point x="226" y="81"></point>
+        <point x="280" y="119"></point>
+        <point x="292" y="146"></point>
+        <point x="292" y="160"></point>
+        <point x="287" y="170"></point>
+        <point x="270" y="195"></point>
+        <point x="195" y="210"></point>
+        <point x="151" y="212"></point>
+        <point x="30" y="166"></point>
+      </polygon>
+      <circle x="215" y="106" marked="false" color="255" diameter="30" filled="true"></circle>
+    </shape>
+    <shape name="flag" rotatable="false" editableColorIndex="0">
+      <rectangle endX="75" startY="15" marked="true" color="-1920102913" endY="300" startX="60" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="90" y="150"></point>
+        <point x="270" y="90"></point>
+        <point x="90" y="30"></point>
+      </polygon>
+      <line endX="90" startY="135" marked="true" color="-1920102913" endY="135" startX="75"></line>
+      <line endX="90" startY="45" marked="true" color="-1920102913" endY="45" startX="75"></line>
+    </shape>
+    <shape name="flower" rotatable="false" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="135" y="120"></point>
+        <point x="165" y="165"></point>
+        <point x="180" y="210"></point>
+        <point x="180" y="240"></point>
+        <point x="150" y="300"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="240"></point>
+        <point x="195" y="195"></point>
+        <point x="165" y="135"></point>
+      </polygon>
+      <circle x="85" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="147" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="192" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="85" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="70" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="25" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="96" y="51" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="113" y="68" marked="false" color="255" diameter="74" filled="true"></circle>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="189" y="233"></point>
+        <point x="219" y="188"></point>
+        <point x="249" y="173"></point>
+        <point x="279" y="188"></point>
+        <point x="234" y="218"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="180" y="255"></point>
+        <point x="150" y="210"></point>
+        <point x="105" y="210"></point>
+        <point x="75" y="240"></point>
+        <point x="135" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="house" rotatable="false" editableColorIndex="0">
+      <rectangle endX="255" startY="120" marked="true" color="-1920102913" endY="285" startX="45" filled="true"></rectangle>
+      <rectangle endX="180" startY="210" marked="false" color="255" endY="285" startX="120" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="120"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+      <line endX="270" startY="120" marked="false" color="255" endY="120" startX="30"></line>
+    </shape>
+    <shape name="leaf" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="210"></point>
+        <point x="135" y="195"></point>
+        <point x="120" y="210"></point>
+        <point x="60" y="210"></point>
+        <point x="30" y="195"></point>
+        <point x="60" y="180"></point>
+        <point x="60" y="165"></point>
+        <point x="15" y="135"></point>
+        <point x="30" y="120"></point>
+        <point x="15" y="105"></point>
+        <point x="40" y="104"></point>
+        <point x="45" y="90"></point>
+        <point x="60" y="90"></point>
+        <point x="90" y="105"></point>
+        <point x="105" y="120"></point>
+        <point x="120" y="120"></point>
+        <point x="105" y="60"></point>
+        <point x="120" y="60"></point>
+        <point x="135" y="30"></point>
+        <point x="150" y="15"></point>
+        <point x="165" y="30"></point>
+        <point x="180" y="60"></point>
+        <point x="195" y="60"></point>
+        <point x="180" y="120"></point>
+        <point x="195" y="120"></point>
+        <point x="210" y="105"></point>
+        <point x="240" y="90"></point>
+        <point x="255" y="90"></point>
+        <point x="263" y="104"></point>
+        <point x="285" y="105"></point>
+        <point x="270" y="120"></point>
+        <point x="285" y="135"></point>
+        <point x="240" y="165"></point>
+        <point x="240" y="180"></point>
+        <point x="270" y="195"></point>
+        <point x="240" y="210"></point>
+        <point x="180" y="210"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="195"></point>
+        <point x="135" y="240"></point>
+        <point x="120" y="255"></point>
+        <point x="105" y="255"></point>
+        <point x="105" y="285"></point>
+        <point x="135" y="285"></point>
+        <point x="165" y="240"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+    </shape>
+    <shape name="line" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="300" startX="150"></line>
+    </shape>
+    <shape name="line half" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="150" startX="150"></line>
+    </shape>
+    <shape name="pentagon" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="15"></point>
+        <point x="15" y="120"></point>
+        <point x="60" y="285"></point>
+        <point x="240" y="285"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+    </shape>
+    <shape name="person" rotatable="false" editableColorIndex="0">
+      <circle x="110" y="5" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="120" y="195"></point>
+        <point x="90" y="285"></point>
+        <point x="105" y="300"></point>
+        <point x="135" y="300"></point>
+        <point x="150" y="225"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="300"></point>
+        <point x="210" y="285"></point>
+        <point x="180" y="195"></point>
+        <point x="195" y="90"></point>
+      </polygon>
+      <rectangle endX="172" startY="79" marked="true" color="-1920102913" endY="94" startX="127" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="195" y="90"></point>
+        <point x="240" y="150"></point>
+        <point x="225" y="180"></point>
+        <point x="165" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="60" y="150"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="105"></point>
+      </polygon>
+    </shape>
+    <shape name="plant" rotatable="false" editableColorIndex="0">
+      <rectangle endX="165" startY="90" marked="true" color="-1920102913" endY="300" startX="135" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="255"></point>
+        <point x="90" y="210"></point>
+        <point x="45" y="195"></point>
+        <point x="75" y="255"></point>
+        <point x="135" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="255"></point>
+        <point x="210" y="210"></point>
+        <point x="255" y="195"></point>
+        <point x="225" y="255"></point>
+        <point x="165" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="180"></point>
+        <point x="90" y="135"></point>
+        <point x="45" y="120"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="180"></point>
+        <point x="165" y="210"></point>
+        <point x="225" y="180"></point>
+        <point x="255" y="120"></point>
+        <point x="210" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="105"></point>
+        <point x="90" y="60"></point>
+        <point x="45" y="45"></point>
+        <point x="75" y="105"></point>
+        <point x="135" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="105"></point>
+        <point x="165" y="135"></point>
+        <point x="225" y="105"></point>
+        <point x="255" y="45"></point>
+        <point x="210" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="90"></point>
+        <point x="120" y="45"></point>
+        <point x="150" y="15"></point>
+        <point x="180" y="45"></point>
+        <point x="165" y="90"></point>
+      </polygon>
+    </shape>
+    <shape name="sheep" rotatable="false" editableColorIndex="15">
+      <circle x="203" y="65" marked="true" color="-1" diameter="88" filled="true"></circle>
+      <circle x="70" y="65" marked="true" color="-1" diameter="162" filled="true"></circle>
+      <circle x="150" y="105" marked="true" color="-1" diameter="120" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="218" y="120"></point>
+        <point x="240" y="165"></point>
+        <point x="255" y="165"></point>
+        <point x="278" y="120"></point>
+      </polygon>
+      <circle x="214" y="72" marked="false" color="-1920102913" diameter="67" filled="true"></circle>
+      <rectangle endX="179" startY="223" marked="true" color="-1" endY="298" startX="164" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="45" y="285"></point>
+        <point x="30" y="285"></point>
+        <point x="30" y="240"></point>
+        <point x="15" y="195"></point>
+        <point x="45" y="210"></point>
+      </polygon>
+      <circle x="3" y="83" marked="true" color="-1" diameter="150" filled="true"></circle>
+      <rectangle endX="80" startY="221" marked="true" color="-1" endY="296" startX="65" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="195" y="285"></point>
+        <point x="210" y="285"></point>
+        <point x="210" y="240"></point>
+        <point x="240" y="210"></point>
+        <point x="195" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="276" y="85"></point>
+        <point x="285" y="105"></point>
+        <point x="302" y="99"></point>
+        <point x="294" y="83"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="219" y="85"></point>
+        <point x="210" y="105"></point>
+        <point x="193" y="99"></point>
+        <point x="201" y="83"></point>
+      </polygon>
+    </shape>
+    <shape name="square" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+    </shape>
+    <shape name="square 2" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+      <rectangle endX="240" startY="60" marked="false" color="255" endY="240" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="star" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="1"></point>
+        <point x="185" y="108"></point>
+        <point x="298" y="108"></point>
+        <point x="207" y="175"></point>
+        <point x="242" y="282"></point>
+        <point x="151" y="216"></point>
+        <point x="59" y="282"></point>
+        <point x="94" y="175"></point>
+        <point x="3" y="108"></point>
+        <point x="116" y="108"></point>
+      </polygon>
+    </shape>
+    <shape name="target" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <circle x="60" y="60" marked="true" color="-1920102913" diameter="180" filled="true"></circle>
+      <circle x="90" y="90" marked="false" color="255" diameter="120" filled="true"></circle>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+    </shape>
+    <shape name="tree" rotatable="false" editableColorIndex="0">
+      <circle x="118" y="3" marked="true" color="-1920102913" diameter="94" filled="true"></circle>
+      <rectangle endX="180" startY="195" marked="false" color="-1653716737" endY="300" startX="120" filled="true"></rectangle>
+      <circle x="65" y="21" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="116" y="41" marked="true" color="-1920102913" diameter="127" filled="true"></circle>
+      <circle x="45" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+      <circle x="104" y="74" marked="true" color="-1920102913" diameter="152" filled="true"></circle>
+    </shape>
+    <shape name="triangle" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+    </shape>
+    <shape name="triangle 2" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="151" y="99"></point>
+        <point x="225" y="223"></point>
+        <point x="75" y="224"></point>
+      </polygon>
+    </shape>
+    <shape name="truck" rotatable="false" editableColorIndex="0">
+      <rectangle endX="195" startY="45" marked="true" color="-1920102913" endY="187" startX="4" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="296" y="193"></point>
+        <point x="296" y="150"></point>
+        <point x="259" y="134"></point>
+        <point x="244" y="104"></point>
+        <point x="208" y="104"></point>
+        <point x="207" y="194"></point>
+      </polygon>
+      <rectangle endX="195" startY="60" marked="false" color="-1" endY="105" startX="195" filled="true"></rectangle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="238" y="112"></point>
+        <point x="252" y="141"></point>
+        <point x="219" y="141"></point>
+        <point x="218" y="112"></point>
+      </polygon>
+      <circle x="234" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <rectangle endX="214" startY="185" marked="true" color="-1920102913" endY="194" startX="181" filled="true"></rectangle>
+      <circle x="144" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="144" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="234" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+    </shape>
+    <shape name="turtle" rotatable="true" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="215" y="204"></point>
+        <point x="240" y="233"></point>
+        <point x="246" y="254"></point>
+        <point x="228" y="266"></point>
+        <point x="215" y="252"></point>
+        <point x="193" y="210"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="195" y="90"></point>
+        <point x="225" y="75"></point>
+        <point x="245" y="75"></point>
+        <point x="260" y="89"></point>
+        <point x="269" y="108"></point>
+        <point x="261" y="124"></point>
+        <point x="240" y="105"></point>
+        <point x="225" y="105"></point>
+        <point x="210" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="105" y="90"></point>
+        <point x="75" y="75"></point>
+        <point x="55" y="75"></point>
+        <point x="40" y="89"></point>
+        <point x="31" y="108"></point>
+        <point x="39" y="124"></point>
+        <point x="60" y="105"></point>
+        <point x="75" y="105"></point>
+        <point x="90" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="132" y="85"></point>
+        <point x="134" y="64"></point>
+        <point x="107" y="51"></point>
+        <point x="108" y="17"></point>
+        <point x="150" y="2"></point>
+        <point x="192" y="18"></point>
+        <point x="192" y="52"></point>
+        <point x="169" y="65"></point>
+        <point x="172" y="87"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="85" y="204"></point>
+        <point x="60" y="233"></point>
+        <point x="54" y="254"></point>
+        <point x="72" y="266"></point>
+        <point x="85" y="252"></point>
+        <point x="107" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="119" y="75"></point>
+        <point x="179" y="75"></point>
+        <point x="209" y="101"></point>
+        <point x="224" y="135"></point>
+        <point x="220" y="225"></point>
+        <point x="175" y="261"></point>
+        <point x="128" y="261"></point>
+        <point x="81" y="224"></point>
+        <point x="74" y="135"></point>
+        <point x="88" y="99"></point>
+      </polygon>
+    </shape>
+    <shape name="wheel" rotatable="false" editableColorIndex="0">
+      <circle x="3" y="3" marked="true" color="-1920102913" diameter="294" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <line endX="150" startY="285" marked="true" color="-1920102913" endY="15" startX="150"></line>
+      <line endX="285" startY="150" marked="true" color="-1920102913" endY="150" startX="15"></line>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+      <line endX="79" startY="40" marked="true" color="-1920102913" endY="269" startX="216"></line>
+      <line endX="269" startY="84" marked="true" color="-1920102913" endY="221" startX="40"></line>
+      <line endX="269" startY="216" marked="true" color="-1920102913" endY="79" startX="40"></line>
+      <line endX="221" startY="40" marked="true" color="-1920102913" endY="269" startX="84"></line>
+    </shape>
+    <shape name="wolf" rotatable="false" editableColorIndex="0">
+      <polygon color="255" filled="true" marked="false">
+        <point x="253" y="133"></point>
+        <point x="245" y="131"></point>
+        <point x="245" y="133"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="2" y="194"></point>
+        <point x="13" y="197"></point>
+        <point x="30" y="191"></point>
+        <point x="38" y="193"></point>
+        <point x="38" y="205"></point>
+        <point x="20" y="226"></point>
+        <point x="20" y="257"></point>
+        <point x="27" y="265"></point>
+        <point x="38" y="266"></point>
+        <point x="40" y="260"></point>
+        <point x="31" y="253"></point>
+        <point x="31" y="230"></point>
+        <point x="60" y="206"></point>
+        <point x="68" y="198"></point>
+        <point x="75" y="209"></point>
+        <point x="66" y="228"></point>
+        <point x="65" y="243"></point>
+        <point x="82" y="261"></point>
+        <point x="84" y="268"></point>
+        <point x="100" y="267"></point>
+        <point x="103" y="261"></point>
+        <point x="77" y="239"></point>
+        <point x="79" y="231"></point>
+        <point x="100" y="207"></point>
+        <point x="98" y="196"></point>
+        <point x="119" y="201"></point>
+        <point x="143" y="202"></point>
+        <point x="160" y="195"></point>
+        <point x="166" y="210"></point>
+        <point x="172" y="213"></point>
+        <point x="173" y="238"></point>
+        <point x="167" y="251"></point>
+        <point x="160" y="248"></point>
+        <point x="154" y="265"></point>
+        <point x="169" y="264"></point>
+        <point x="178" y="247"></point>
+        <point x="186" y="240"></point>
+        <point x="198" y="260"></point>
+        <point x="200" y="271"></point>
+        <point x="217" y="271"></point>
+        <point x="219" y="262"></point>
+        <point x="207" y="258"></point>
+        <point x="195" y="230"></point>
+        <point x="192" y="198"></point>
+        <point x="210" y="184"></point>
+        <point x="227" y="164"></point>
+        <point x="242" y="144"></point>
+        <point x="259" y="145"></point>
+        <point x="284" y="151"></point>
+        <point x="277" y="141"></point>
+        <point x="293" y="140"></point>
+        <point x="299" y="134"></point>
+        <point x="297" y="127"></point>
+        <point x="273" y="119"></point>
+        <point x="270" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="-1" y="195"></point>
+        <point x="14" y="180"></point>
+        <point x="36" y="166"></point>
+        <point x="40" y="153"></point>
+        <point x="53" y="140"></point>
+        <point x="82" y="131"></point>
+        <point x="134" y="133"></point>
+        <point x="159" y="126"></point>
+        <point x="188" y="115"></point>
+        <point x="227" y="108"></point>
+        <point x="236" y="102"></point>
+        <point x="238" y="98"></point>
+        <point x="268" y="86"></point>
+        <point x="269" y="92"></point>
+        <point x="281" y="87"></point>
+        <point x="269" y="103"></point>
+        <point x="269" y="113"></point>
+      </polygon>
+    </shape>
+    <shape name="x" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="270" y="75"></point>
+        <point x="225" y="30"></point>
+        <point x="30" y="225"></point>
+        <point x="75" y="270"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="75"></point>
+        <point x="75" y="30"></point>
+        <point x="270" y="225"></point>
+        <point x="225" y="270"></point>
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0"></dash>
+          <dash value="0.0"></dash>
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+</model>
