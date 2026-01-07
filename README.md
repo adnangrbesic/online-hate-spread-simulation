@@ -8,7 +8,7 @@ The model attempts to answer the following questions:
 * What events and how many of them are needed for the majority of agents on both sides (left/right) to become polarized into extremes?
 * How strong must the influences be and how many extremists are needed for these extremes to become "normal"?
 
-* Made by @adnangrbesic and @leveler
+* Made by @Leverever and @adnangrbesic
 
 ## Model Entities
 
